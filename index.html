@@ -629,6 +629,8 @@ panel.innerHTML = `<canvas id="cam-canvas" width="640" height="480"></canvas>
     <button id="opt-cam">카메라 끄기</button>
     <button id="opt-mute" aria-pressed="false">🔊 소리 켬</button>
     <label>볼륨 <input id="opt-vol" type="range" min="0" max="100" value="100" aria-label="볼륨"></label>
+    <label>🔍 줌 <input id="opt-zoom" type="range" min="50" max="250" value="100" aria-label="카메라 줌 (100보다 작으면 멀리, 크면 가까이)"></label>
+    <label>↕ 위아래 <input id="opt-pan" type="range" min="-100" max="100" value="0" aria-label="카메라 위아래 위치"></label>
   </div>
   <div id="cam-credit">만든이 현승쌤(2017)</div>`;
 document.body.appendChild(panel);
@@ -661,6 +663,28 @@ function applySound() {
 }
 muteBtn.onclick = () => { muted = !muted; applySound(); };
 volInput.oninput = () => { volume = volInput.value / 100; if (volume > 0) muted = false; applySound(); };
+
+// 카메라 보기: 줌(100% 미만은 줌아웃, 초과는 확대)과 위아래 위치. 손 인식도 이 화면 기준으로 한다
+const zoomInput = panel.querySelector('#opt-zoom'), panInput = panel.querySelector('#opt-pan');
+try { zoomInput.value = localStorage.getItem('bike-zoom') ?? 100; panInput.value = localStorage.getItem('bike-pan') ?? 0; } catch {}
+zoomInput.oninput = panInput.oninput = () => {
+  try { localStorage.setItem('bike-zoom', zoomInput.value); localStorage.setItem('bike-pan', panInput.value); } catch {}
+};
+const frame = document.createElement('canvas');
+const fctx = frame.getContext('2d');
+function grabFrame() {
+  const vw = video.videoWidth, vh = video.videoHeight, z = zoomInput.value / 100, pan = panInput.value / 100;
+  const fw = 640, fh = Math.round(640 * vh / vw);
+  if (frame.width !== fw || frame.height !== fh) { frame.width = canvas.width = fw; frame.height = canvas.height = fh; }
+  if (z >= 1) { // 확대: 가운데를 잘라 키움
+    const sw = vw / z, sh = vh / z;
+    fctx.drawImage(video, (vw - sw) / 2, (vh - sh) / 2 * (1 - pan), sw, sh, 0, 0, fw, fh);
+  } else { // 줌아웃: 영상을 작게 줄여 가운데에 (멀리서 찍은 것처럼)
+    const dw = fw * z, dh = fh * z;
+    fctx.fillStyle = '#333'; fctx.fillRect(0, 0, fw, fh);
+    fctx.drawImage(video, (fw - dw) / 2, (fh - dh) / 2 * (1 + pan), dw, dh);
+  }
+}
 const video = document.createElement('video');
 video.playsInline = true; video.muted = true;
 const setStatus = s => { statusEl.textContent = s; };
@@ -669,9 +693,12 @@ let landmarker = null, stream = null, on = true, holdStart = 0, lastStart = 0, l
 
 async function startCamera() {
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' } });
+    stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } });
     video.srcObject = stream;
     await video.play();
+    // 노트북 카메라가 하드웨어 줌을 지원하면 가장 넓게
+    const track = stream.getVideoTracks()[0], zc = track.getCapabilities?.().zoom;
+    if (zc) track.applyConstraints({ advanced: [{ zoom: zc.min }] }).catch(() => {});
     if (!landmarker) {
       setStatus('손 인식 준비 중…');
       const { FilesetResolver, HandLandmarker } = await import(`${MP}/vision_bundle.mjs`);
@@ -716,7 +743,7 @@ function palm(hand) {
 function draw(palms, screen, holdRatio, s) {
   const playing = screen === 'play';
   const W = canvas.width, H = canvas.height;
-  ctx.save(); ctx.translate(W, 0); ctx.scale(-1, 1); ctx.drawImage(video, 0, 0, W, H); ctx.restore();
+  ctx.save(); ctx.translate(W, 0); ctx.scale(-1, 1); ctx.drawImage(frame, 0, 0, W, H); ctx.restore();
   showMarks ? drawMarks(palms, playing, holdRatio, s) : drawHandlebar(palms);
   ctx.fillStyle = '#fff'; ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineWidth = 6;
   ctx.font = 'bold 40px sans-serif'; ctx.textAlign = 'center';
@@ -788,7 +815,8 @@ function loop() {
   const dt = lastTs < 0 ? 0 : Math.min(0.1, (ts - lastTs) / 1000);
   lastTs = ts;
   // 화면 왼쪽(거울 기준)에 있는 손을 왼손으로 본다
-  const palms = (landmarker.detectForVideo(video, ts).landmarks || []).map(palm).sort((a, b) => a.u - b.u);
+  grabFrame();
+  const palms = (landmarker.detectForVideo(frame, ts).landmarks || []).map(palm).sort((a, b) => a.u - b.u);
   const t = window.vm.runtime.getSpriteTargetByName(BIKE);
   const stage = window.vm.runtime.getTargetForStage();
   // 게임 중: 자전거가 보임 / 처음 화면: 배경 '초기화면1' / 그 밖: 결과 화면
