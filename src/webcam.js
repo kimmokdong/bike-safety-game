@@ -39,8 +39,11 @@ css.textContent = `
   #cam-opts label { font-size: 14px; display: flex; align-items: center; gap: 6px; }
   @media (max-aspect-ratio: 1/1) {
     #app, #loading, #error, #launch { width: 100% !important; height: 60% !important; }
-    #cam-panel { top: 60%; width: 100%; height: 40%; flex-direction: row; }
-    #cam-canvas { width: auto; height: 100%; }
+    #cam-panel { top: 60%; width: 100%; height: 40%; display: grid; grid-template-columns: auto 1fr;
+      align-content: center; column-gap: 16px; row-gap: 8px; }
+    #cam-canvas { width: auto; height: calc(40vh - 24px); grid-row: 1 / span 4; }
+    #cam-help { display: none; }
+    #cam-status { font-size: 18px; }
   }`;
 document.head.appendChild(css);
 const panel = document.createElement('div');
